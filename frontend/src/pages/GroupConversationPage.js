@@ -12,7 +12,7 @@ import Header from '@/components/Header';
 import VerifiedBadge from '@/components/VerifiedBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ArrowLeft, Send, Info, Loader2, Copy, Reply, Trash2, MoreVertical, X, Clock } from 'lucide-react';
+import { ArrowLeft, Send, Info, Loader2, Copy, Reply, Trash2, MoreVertical, X, Clock, AlertCircle } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
@@ -35,10 +35,12 @@ export default function GroupConversationPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [messageToDelete, setMessageToDelete] = useState(null);
   const [deleteForEveryone, setDeleteForEveryone] = useState(false);
+  const [userJoinTime, setUserJoinTime] = useState(null);
   
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const messageRefs = useRef({});
+  const membershipCheckRef = useRef(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -53,6 +55,21 @@ export default function GroupConversationPage() {
     }
   }, []);
 
+  // Check membership status and update immediately
+  const checkMembershipStatus = useCallback(async () => {
+    if (!user?.id || !groupId) return;
+    
+    const memberStatus = await isGroupMember(groupId, user.id);
+    setIsMember(memberStatus);
+    
+    if (memberStatus) {
+      const adminStatus = await isGroupAdmin(groupId, user.id);
+      setIsAdmin(adminStatus);
+    } else {
+      setIsAdmin(false);
+    }
+  }, [user?.id, groupId]);
+
   useEffect(() => {
     if (!user?.id || !groupId) return;
 
@@ -64,19 +81,15 @@ export default function GroupConversationPage() {
           setLoading(false);
         }
 
-        const memberStatus = await isGroupMember(groupId, user.id);
-        setIsMember(memberStatus);
-
-        if (!memberStatus) {
-          setLoading(false);
-          return;
-        }
-
-        const adminStatus = await isGroupAdmin(groupId, user.id);
-        setIsAdmin(adminStatus);
+        await checkMembershipStatus();
 
         const info = await getGroupInfo(groupId);
         setGroupInfo(info);
+
+        if (!info) {
+          setLoading(false);
+          return;
+        }
 
         const membersList = await getGroupMembers(groupId);
         setMembers(membersList);
@@ -91,6 +104,16 @@ export default function GroupConversationPage() {
           }
         }
         setUserDetails(details);
+        
+        // Get user's join time
+        const userGroupRef = await import('@/lib/firebaseFourth').then(m => m.ref);
+        const fourthDatabase = await import('@/lib/firebaseFourth').then(m => m.fourthDatabase);
+        const get = await import('@/lib/firebaseFourth').then(m => m.get);
+        const userGroupSnap = await get(userGroupRef(fourthDatabase, `userGroups/${user.id}/${groupId}`));
+        if (userGroupSnap.exists()) {
+          setUserJoinTime(userGroupSnap.val().joinedAt);
+        }
+        
         await markGroupMessagesAsRead(groupId, user.id);
       } catch (error) {
         console.error('Error loading group data:', error);
@@ -102,14 +125,41 @@ export default function GroupConversationPage() {
 
     loadGroupData();
 
+    // Subscribe to real-time messages with membership check
     const unsubscribe = subscribeToGroupMessages(groupId, async (newMessages) => {
-      setMessages(newMessages);
-      await cacheGroupMessages(groupId, newMessages);
-      await markGroupMessagesAsRead(groupId, user.id);
+      // Check if user is still a member before updating messages
+      const memberStatus = await isGroupMember(groupId, user.id);
+      setIsMember(memberStatus);
+      
+      if (memberStatus) {
+        const adminStatus = await isGroupAdmin(groupId, user.id);
+        setIsAdmin(adminStatus);
+        
+        // Filter messages based on join time
+        const filtered = newMessages.filter(msg => {
+          if (!userJoinTime) return true;
+          return new Date(msg.timestamp) >= new Date(userJoinTime);
+        });
+        
+        setMessages(filtered);
+        await cacheGroupMessages(groupId, filtered);
+        await markGroupMessagesAsRead(groupId, user.id);
+      } else {
+        // User is no longer a member, stop showing new messages
+        setIsAdmin(false);
+      }
     });
 
-    return () => unsubscribe();
-  }, [user?.id, groupId]);
+    // Periodic membership check every 2 seconds
+    membershipCheckRef.current = setInterval(checkMembershipStatus, 2000);
+
+    return () => {
+      unsubscribe();
+      if (membershipCheckRef.current) {
+        clearInterval(membershipCheckRef.current);
+      }
+    };
+  }, [user?.id, groupId, checkMembershipStatus, userJoinTime]);
 
   useEffect(() => {
     if (messages.length > 0) scrollToBottom();
@@ -117,7 +167,13 @@ export default function GroupConversationPage() {
 
   const handleSendMessage = async (e) => {
     e?.preventDefault();
-    if (!messageText.trim() || sending) return;
+    if (!messageText.trim() || sending || !isMember) return;
+
+    // Check admin-only messaging
+    if (groupInfo?.settings?.adminOnlyMessaging && !isAdmin) {
+      toast.error('Only admins can send messages in this group');
+      return;
+    }
 
     setSending(true);
     try {
@@ -202,12 +258,10 @@ export default function GroupConversationPage() {
     const isSystemMessage = message.type === 'system';
 
     if (isSystemMessage) {
-      const senderUsername = userDetails[message.triggeredBy]?.username || 'Someone';
-      const messageText = message.text.replace(message.triggeredBy, `@${senderUsername}`);
       return (
         <div key={message.id} className="flex justify-center my-4">
           <div className="bg-neutral-200 dark:bg-neutral-700 discuss:bg-[#333333] px-4 py-2 rounded-full max-w-[80%]">
-            <p className="text-xs text-neutral-600 dark:text-neutral-300 discuss:text-[#9CA3AF] text-center">{messageText}</p>
+            <p className="text-xs text-neutral-600 dark:text-neutral-300 discuss:text-[#9CA3AF] text-center">{message.text}</p>
           </div>
         </div>
       );
@@ -235,7 +289,7 @@ export default function GroupConversationPage() {
               <p className={`text-[10px] mt-1 ${isOwn ? 'text-white/60' : 'text-neutral-400 dark:text-neutral-500'}`}>{formatTime(message.timestamp)}</p>
             </div>
 
-            {!message.deleted && (
+            {!message.deleted && isMember && (
               <div className={`absolute top-1/2 -translate-y-1/2 ${isOwn ? 'left-0 -translate-x-full' : 'right-0 translate-x-full'} opacity-0 group-hover:opacity-100 transition-opacity`}>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -270,9 +324,9 @@ export default function GroupConversationPage() {
     );
   }
 
-  const isDeleted = groupInfo?.status === GROUP_STATUS.DELETED;
-  const canSendMessages = isMember && !isDeleted && (!groupInfo?.settings?.adminOnlyMessaging || isAdmin);
+  const canSendMessages = isMember && (!groupInfo?.settings?.adminOnlyMessaging || isAdmin);
   const groupedMessages = groupMessagesByDate(messages);
+  const isAdminOnlyMode = groupInfo?.settings?.adminOnlyMessaging;
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 discuss:bg-[#121212] flex flex-col">
@@ -289,50 +343,53 @@ export default function GroupConversationPage() {
                 <h1 className="font-bold text-base text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]">{groupInfo?.name || 'Group'}</h1>
                 <span className="bg-[#2563EB]/10 discuss:bg-[#EF4444]/10 text-[#2563EB] discuss:text-[#EF4444] text-[10px] font-bold px-2 py-0.5 rounded-full">Group Chat</span>
                 {groupInfo?.settings?.autoDelete24h && <span className="bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1" title="24h auto-delete enabled"><Clock className="w-3 h-3" />24h</span>}
+                {isAdminOnlyMode && <span className="bg-purple-500/20 text-purple-600 dark:text-purple-400 text-[10px] font-bold px-2 py-0.5 rounded-full" title="Admin-only messaging">Admin Only</span>}
               </div>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]">{isDeleted ? 'Group deleted' : `${members.length} members`}</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]">{members.length} members</p>
             </div>
           </div>
-          {!isDeleted && (
-            <button onClick={() => navigate(`/group/${groupId}/info`)} className="p-2 rounded-[6px] hover:bg-neutral-100 dark:hover:bg-neutral-700 discuss:hover:bg-[#262626] transition-colors">
-              <Info className="w-5 h-5 text-neutral-500 dark:text-neutral-400" />
-            </button>
-          )}
+          <button onClick={() => navigate(`/group/${groupId}/info`)} className="p-2 rounded-[6px] hover:bg-neutral-100 dark:hover:bg-neutral-700 discuss:hover:bg-[#262626] transition-colors">
+            <Info className="w-5 h-5 text-neutral-500 dark:text-neutral-400" />
+          </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4" style={{ maxHeight: 'calc(100vh - 180px)' }}>
         <div className="max-w-2xl mx-auto">
-          {!isMember ? (
-            <div className="text-center py-16 bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a] rounded-[12px] border border-neutral-200 dark:border-neutral-700 discuss:border-[#333333]">
-              <p className="text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5] font-semibold mb-2">You are no longer part of this group</p>
-              <p className="text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF] text-sm">You can view old messages but cannot send new ones</p>
-            </div>
-          ) : isDeleted ? (
-            <div className="text-center py-16 bg-amber-50 dark:bg-amber-950/30 discuss:bg-amber-950/30 rounded-[12px] border border-amber-200 dark:border-amber-800 discuss:border-amber-800">
-              <p className="text-amber-900 dark:text-amber-200 discuss:text-amber-200 font-semibold mb-2">This group was deleted by an admin</p>
-              <p className="text-amber-800 dark:text-amber-300 discuss:text-amber-300 text-sm">You can still view old messages</p>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="text-center py-16"><p className="text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]">No messages yet. Start the conversation!</p></div>
-          ) : null}
-
-          {Object.entries(groupedMessages).map(([date, dateMessages]) => (
-            <div key={date}>
-              <div className="flex justify-center my-4">
-                <div className="bg-neutral-200 dark:bg-neutral-700 discuss:bg-[#333333] px-3 py-1 rounded-full">
-                  <p className="text-xs text-neutral-600 dark:text-neutral-300 discuss:text-[#9CA3AF] font-medium">{date}</p>
+          {!isMember && (
+            <div className="mb-4 bg-amber-50 dark:bg-amber-950/30 discuss:bg-amber-950/30 border border-amber-200 dark:border-amber-800 discuss:border-amber-800 rounded-[12px] p-4">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">You are no longer part of this group</p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300 mt-1">You can view old messages but cannot send new ones</p>
                 </div>
               </div>
-              {dateMessages.map(renderMessage)}
             </div>
-          ))}
+          )}
+
+          {messages.length === 0 ? (
+            <div className="text-center py-16 bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a] rounded-[12px] border border-neutral-200 dark:border-neutral-700 discuss:border-[#333333]">
+              <p className="text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]">No messages yet</p>
+            </div>
+          ) : (
+            Object.entries(groupedMessages).map(([date, dateMessages]) => (
+              <div key={date}>
+                <div className="flex justify-center my-4">
+                  <div className="bg-neutral-200 dark:bg-neutral-700 discuss:bg-[#333333] px-3 py-1 rounded-full">
+                    <p className="text-xs text-neutral-600 dark:text-neutral-300 discuss:text-[#9CA3AF] font-medium">{date}</p>
+                  </div>
+                </div>
+                {dateMessages.map(renderMessage)}
+              </div>
+            ))
+          )}
           
           <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {canSendMessages && (
+      {canSendMessages ? (
         <div className="bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a] border-t border-neutral-200 dark:border-neutral-700 discuss:border-[#333333] px-4 py-3">
           <div className="max-w-2xl mx-auto">
             {replyTo && (
@@ -348,11 +405,17 @@ export default function GroupConversationPage() {
             )}
 
             <form onSubmit={handleSendMessage} className="flex gap-2">
-              <Input ref={inputRef} value={messageText} onChange={(e) => setMessageText(e.target.value)} placeholder="Type a message..." className="flex-1 bg-neutral-100 dark:bg-neutral-700 discuss:bg-[#262626] border-neutral-200 dark:border-neutral-600 discuss:border-[#404040] text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]" disabled={sending} maxLength={1000} />
-              <Button type="submit" disabled={!messageText.trim() || sending} className="bg-[#2563EB] discuss:bg-[#EF4444] hover:bg-[#1D4ED8] discuss:hover:bg-[#DC2626] text-white px-4">
+              <Input ref={inputRef} value={messageText} onChange={(e) => setMessageText(e.target.value)} placeholder={isAdminOnlyMode && !isAdmin ? "Only admins can send messages" : "Type a message..."} className="flex-1 bg-neutral-100 dark:bg-neutral-700 discuss:bg-[#262626] border-neutral-200 dark:border-neutral-600 discuss:border-[#404040] text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]" disabled={sending || (isAdminOnlyMode && !isAdmin)} maxLength={1000} />
+              <Button type="submit" disabled={!messageText.trim() || sending || (isAdminOnlyMode && !isAdmin)} className="bg-[#2563EB] discuss:bg-[#EF4444] hover:bg-[#1D4ED8] discuss:hover:bg-[#DC2626] text-white px-4">
                 {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
               </Button>
             </form>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-neutral-100 dark:bg-neutral-800 discuss:bg-[#1a1a1a] border-t border-neutral-200 dark:border-neutral-700 discuss:border-[#333333] px-4 py-3">
+          <div className="max-w-2xl mx-auto text-center">
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">{isAdminOnlyMode ? 'Only admins can send messages in this group' : 'You cannot send messages in this group'}</p>
           </div>
         </div>
       )}

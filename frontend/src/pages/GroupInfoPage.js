@@ -6,7 +6,8 @@ import { getFriendsWithDetails, getRelationshipStatus, sendFriendRequest } from 
 import {
   getGroupInfo, getGroupMembers, subscribeToGroupMembers, isGroupAdmin, isGroupMember,
   removeMemberFromGroup, promoteMemberToAdmin, demoteAdminToMember, leaveGroup, deleteGroup,
-  updateGroupSettings, addMemberToGroup, deleteChatLocally, GROUP_STATUS, GROUP_TYPE, MEMBER_ROLE
+  updateGroupSettings, addMemberToGroup, deleteChatLocally, deleteAllGroupMessages,
+  GROUP_STATUS, GROUP_TYPE, MEMBER_ROLE
 } from '@/lib/groupsDb';
 import Header from '@/components/Header';
 import VerifiedBadge from '@/components/VerifiedBadge';
@@ -152,17 +153,32 @@ export default function GroupInfoPage() {
     }
   };
 
+  const handleDeleteAllMessages = async () => {
+    try {
+      await deleteAllGroupMessages(groupId, user.id);
+      toast.success('All messages deleted for everyone');
+      setConfirmDialog({ open: false, action: null, data: null });
+    } catch (error) {
+      toast.error(error.message);
+      setConfirmDialog({ open: false, action: null, data: null });
+    }
+  };
+
   const handleDeleteChat = async () => {
     try {
-      if (isAdmin && isMember) {
-        // Admin deletes group for everyone
-        await deleteGroup(groupId, user.id);
-        toast.success('Group deleted for everyone');
-      } else {
-        // Member deletes chat locally
-        await deleteChatLocally(groupId, user.id);
-        toast.success('Chat deleted');
-      }
+      await deleteChatLocally(groupId, user.id);
+      toast.success('Chat deleted from your list');
+      navigate('/chat');
+    } catch (error) {
+      toast.error(error.message);
+      setConfirmDialog({ open: false, action: null, data: null });
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    try {
+      await deleteGroup(groupId, user.id);
+      toast.success('Group deleted for everyone');
       navigate('/chat');
     } catch (error) {
       toast.error(error.message);
@@ -402,8 +418,19 @@ export default function GroupInfoPage() {
               {confirmDialog.action === 'promote' && 'Promote to Admin?'}
               {confirmDialog.action === 'demote' && 'Demote Admin?'}
               {confirmDialog.action === 'leave' && 'Leave Group?'}
-              {confirmDialog.action === 'deletechat' && 'Delete Chat?'}
+              {confirmDialog.action === 'deletemessages' && 'Delete All Messages?'}
+              {confirmDialog.action === 'deletegroup' && 'Delete Group Permanently?'}
+              {confirmDialog.action === 'deletechat' && 'Delete Chat From List?'}
             </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmDialog.action === 'remove' && 'This member will be removed.'}
+              {confirmDialog.action === 'promote' && 'This member will be promoted to admin.'}
+              {confirmDialog.action === 'demote' && 'This admin will be demoted.'}
+              {confirmDialog.action === 'leave' && 'You will leave this group.'}
+              {confirmDialog.action === 'deletemessages' && 'This will DELETE ALL MESSAGES for ALL members. Group will remain but show \"No messages\". Cannot be undone!'}
+              {confirmDialog.action === 'deletegroup' && 'This will PERMANENTLY DELETE the group for ALL members. All messages and data will be lost. Cannot be undone!'}
+              {confirmDialog.action === 'deletechat' && 'This will remove the chat from your list only. You can rejoin later if added back.'}
+            </AlertDialogDescription>
             <AlertDialogDescription>
               {confirmDialog.action === 'remove' && 'This member will be removed.'}
               {confirmDialog.action === 'promote' && 'This member will be promoted to admin.'}
