@@ -4,7 +4,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getUser } from '@/lib/db';
 import { getChatsWithUserDetails, subscribeToUserChats, getUserChats, getChatSettings } from '@/lib/chatsDb';
 import { getFriendsWithDetails, searchFriends } from '@/lib/relationshipsDb';
-import { getUserGroups, subscribeToUserGroups, GROUP_STATUS } from '@/lib/groupsDb';
+import { 
+  getUserGroups, 
+  subscribeToUserGroups, 
+  GROUP_STATUS,
+  searchPublicGroups,
+  sendJoinRequest,
+  getUserJoinRequestStatus,
+  cancelJoinRequest
+} from '@/lib/groupsDb';
 import { 
   getCachedChats, 
   cacheChats, 
@@ -26,8 +34,16 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { 
   ArrowLeft, Search, X, MessageCircle, Users, Loader2, 
-  MessageSquarePlus, Timer, MoreVertical, UserPlus, Inbox
+  MessageSquarePlus, Timer, MoreVertical, UserPlus, Inbox, Globe
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 export default function ChatPage() {
   const { user } = useAuth();
@@ -42,6 +58,11 @@ export default function ChatPage() {
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' or 'friends'
   const [chatSettings, setChatSettings] = useState({});
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [searchGroupsOpen, setSearchGroupsOpen] = useState(false);
+  const [publicGroups, setPublicGroups] = useState([]);
+  const [groupSearchQuery, setGroupSearchQuery] = useState('');
+  const [searchingGroups, setSearchingGroups] = useState(false);
+  const [groupRequestStatus, setGroupRequestStatus] = useState({});
 
   // Load chats, groups and friends with user details inline - with caching
   useEffect(() => {
@@ -231,6 +252,51 @@ export default function ChatPage() {
     });
     // Navigate to the new group
     navigate(`/group/${group.id}`);
+  };
+
+  const handleSearchGroups = async (query) => {
+    if (!query.trim()) {
+      setPublicGroups([]);
+      return;
+    }
+    
+    setSearchingGroups(true);
+    try {
+      const results = await searchPublicGroups(query);
+      setPublicGroups(results);
+      
+      // Check request status for each group
+      const statuses = {};
+      for (const group of results) {
+        const status = await getUserJoinRequestStatus(group.id, user.id);
+        statuses[group.id] = status;
+      }
+      setGroupRequestStatus(statuses);
+    } catch (error) {
+      console.error('Error searching groups:', error);
+    } finally {
+      setSearchingGroups(false);
+    }
+  };
+
+  const handleJoinRequest = async (groupId) => {
+    try {
+      await sendJoinRequest(groupId, user.id);
+      setGroupRequestStatus({ ...groupRequestStatus, [groupId]: 'pending' });
+      toast.success('Join request sent');
+    } catch (error) {
+      toast.error('Failed to send request');
+    }
+  };
+
+  const handleCancelRequest = async (groupId) => {
+    try {
+      await cancelJoinRequest(groupId, user.id);
+      setGroupRequestStatus({ ...groupRequestStatus, [groupId]: 'cancelled' });
+      toast.success('Request cancelled');
+    } catch (error) {
+      toast.error('Failed to cancel request');
+    }
   };
 
   const formatTime = (timestamp) => {
@@ -457,6 +523,10 @@ export default function ChatPage() {
                 <UserPlus className="w-4 h-4 mr-2" />
                 Create Group
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSearchGroupsOpen(true)}>
+                <Globe className="w-4 h-4 mr-2" />
+                Search Public Groups
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate('/join-requests')}>
                 <Inbox className="w-4 h-4 mr-2" />
                 View / Manage Requests
@@ -608,6 +678,89 @@ export default function ChatPage() {
         userId={user?.id}
         onGroupCreated={handleGroupCreated}
       />
+
+      {/* Search Public Groups Dialog */}
+      <Dialog open={searchGroupsOpen} onOpenChange={setSearchGroupsOpen}>
+        <DialogContent className="sm:max-w-[500px] bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a]">
+          <DialogHeader>
+            <DialogTitle className="text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]">
+              Search Public Groups
+            </DialogTitle>
+            <DialogDescription className="text-neutral-500 dark:text-neutral-400">
+              Find and join public groups
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+              <Input
+                value={groupSearchQuery}
+                onChange={(e) => {
+                  setGroupSearchQuery(e.target.value);
+                  handleSearchGroups(e.target.value);
+                }}
+                placeholder="Search groups..."
+                className="pl-10 bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a]"
+              />
+            </div>
+            
+            <div className="max-h-[400px] overflow-y-auto space-y-2">
+              {searchingGroups ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-[#2563EB] discuss:text-[#EF4444]" />
+                </div>
+              ) : publicGroups.length === 0 ? (
+                <div className="text-center py-8 text-neutral-500 dark:text-neutral-400">
+                  {groupSearchQuery ? 'No groups found' : 'Type to search public groups'}
+                </div>
+              ) : (
+                publicGroups.map(group => (
+                  <div
+                    key={group.id}
+                    className="p-3 bg-neutral-50 dark:bg-neutral-700 discuss:bg-[#262626] rounded-lg flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+                        <span className="text-white font-bold text-sm">
+                          {group.name?.slice(0, 2).toUpperCase()}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-sm text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]">
+                          {group.name}
+                        </p>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                          {group.memberCount || 0} members
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {groupRequestStatus[group.id] === 'pending' ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCancelRequest(group.id)}
+                        className="text-xs"
+                      >
+                        Cancel Request
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        onClick={() => handleJoinRequest(group.id)}
+                        className="bg-[#2563EB] discuss:bg-[#EF4444] text-white text-xs"
+                      >
+                        Request to Join
+                      </Button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <style jsx global>{`
         .scrollbar-hide::-webkit-scrollbar {
