@@ -6,7 +6,7 @@ import { getFriendsWithDetails, getRelationshipStatus, sendFriendRequest } from 
 import {
   getGroupInfo, getGroupMembers, subscribeToGroupMembers, isGroupAdmin, isGroupMember,
   removeMemberFromGroup, promoteMemberToAdmin, demoteAdminToMember, leaveGroup, deleteGroup,
-  updateGroupSettings, addMemberToGroup, GROUP_STATUS, GROUP_TYPE, MEMBER_ROLE
+  updateGroupSettings, addMemberToGroup, deleteChatLocally, GROUP_STATUS, GROUP_TYPE, MEMBER_ROLE
 } from '@/lib/groupsDb';
 import Header from '@/components/Header';
 import VerifiedBadge from '@/components/VerifiedBadge';
@@ -154,8 +154,15 @@ export default function GroupInfoPage() {
 
   const handleDeleteChat = async () => {
     try {
-      await deleteGroup(groupId, user.id);
-      toast.success(isAdmin ? 'Group deleted for everyone' : 'Chat deleted');
+      if (isAdmin && isMember) {
+        // Admin deletes group for everyone
+        await deleteGroup(groupId, user.id);
+        toast.success('Group deleted for everyone');
+      } else {
+        // Member deletes chat locally
+        await deleteChatLocally(groupId, user.id);
+        toast.success('Chat deleted');
+      }
       navigate('/chat');
     } catch (error) {
       toast.error(error.message);
@@ -402,7 +409,7 @@ export default function GroupInfoPage() {
               {confirmDialog.action === 'promote' && 'This member will be promoted to admin.'}
               {confirmDialog.action === 'demote' && 'This admin will be demoted.'}
               {confirmDialog.action === 'leave' && 'You will leave this group.'}
-              {confirmDialog.action === 'deletechat' && (isAdmin ? 'This will delete the group for everyone. Cannot be undone!' : 'This will delete this chat for you only.')}
+              {confirmDialog.action === 'deletechat' && (isAdmin && isMember ? 'This will PERMANENTLY delete the group for ALL members. All messages will be lost. This cannot be undone!' : 'This will delete this chat from your list only. You can rejoin later if invited.')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
