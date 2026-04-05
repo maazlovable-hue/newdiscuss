@@ -4,29 +4,19 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getUser } from '@/lib/db';
 import { getChatsWithUserDetails, subscribeToUserChats, getUserChats, getChatSettings } from '@/lib/chatsDb';
 import { getFriendsWithDetails, searchFriends } from '@/lib/relationshipsDb';
-import { getUserGroups, subscribeToUserGroups, GROUP_STATUS } from '@/lib/groupsDb';
 import { 
   getCachedChats, 
   cacheChats, 
   getCachedFriends, 
-  cacheFriends,
-  getCachedGroups,
-  cacheGroups
+  cacheFriends 
 } from '@/lib/cacheManager';
 import Header from '@/components/Header';
 import VerifiedBadge from '@/components/VerifiedBadge';
-import CreateGroupModal from '@/components/CreateGroupModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { 
   ArrowLeft, Search, X, MessageCircle, Users, Loader2, 
-  MessageSquarePlus, Timer, MoreVertical, UserPlus, Inbox
+  MessageSquarePlus, Clock, Timer
 } from 'lucide-react';
 
 export default function ChatPage() {
@@ -34,26 +24,23 @@ export default function ChatPage() {
   const navigate = useNavigate();
   const [chats, setChats] = useState([]);
   const [friends, setFriends] = useState([]);
-  const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' or 'friends'
   const [chatSettings, setChatSettings] = useState({});
-  const [createGroupOpen, setCreateGroupOpen] = useState(false);
 
-  // Load chats, groups and friends with user details inline - with caching
+  // Load chats and friends with user details inline - with caching
   useEffect(() => {
     if (!user?.id) return;
 
     const loadData = async () => {
       try {
         // Try to get cached data first for instant loading
-        const [cachedChatsData, cachedFriendsData, cachedGroupsData] = await Promise.all([
+        const [cachedChatsData, cachedFriendsData] = await Promise.all([
           getCachedChats(user.id),
-          getCachedFriends(user.id),
-          getCachedGroups(user.id)
+          getCachedFriends(user.id)
         ]);
 
         // If we have cached data, show it immediately
@@ -64,9 +51,6 @@ export default function ChatPage() {
         if (cachedFriendsData && cachedFriendsData.length > 0) {
           setFriends(cachedFriendsData);
         }
-        if (cachedGroupsData && cachedGroupsData.length > 0) {
-          setGroups(cachedGroupsData);
-        }
 
         // Get raw chats first
         const rawChats = await getUserChats(user.id);
@@ -75,10 +59,11 @@ export default function ChatPage() {
         const chatsWithDetails = await Promise.all(
           rawChats.map(async (chat) => {
             try {
-              if (!chat.otherUser) return null;
+              if (!chat.otherUser) return null; // Skip chats without otherUser
               
               const userData = await getUser(chat.otherUser);
               
+              // Skip if user doesn't exist or is invalid
               if (!userData || !userData.username) {
                 console.warn('Skipping chat with invalid user:', chat.otherUser);
                 return null;
@@ -102,7 +87,7 @@ export default function ChatPage() {
               };
             } catch (err) {
               console.error('Error fetching user:', err);
-              return null;
+              return null; // Skip chats with errors
             }
           })
         );
@@ -111,18 +96,14 @@ export default function ChatPage() {
         const validChats = chatsWithDetails.filter(chat => chat !== null && chat.otherUserDetails !== null);
         
         setChats(validChats);
+        // Cache the chats data
         await cacheChats(user.id, chatsWithDetails);
         
         // Load friends
         const friendsData = await getFriendsWithDetails(user.id);
         setFriends(friendsData);
+        // Cache the friends data
         await cacheFriends(user.id, friendsData);
-        
-        // Load groups
-        const groupsData = await getUserGroups(user.id);
-        setGroups(groupsData);
-        await cacheGroups(user.id, groupsData);
-        
       } catch (error) {
         console.error('Error loading chat data:', error);
       } finally {
@@ -133,7 +114,8 @@ export default function ChatPage() {
     loadData();
 
     // Subscribe to real-time chat updates
-    const unsubscribeChats = subscribeToUserChats(user.id, async (updatedChats) => {
+    const unsubscribe = subscribeToUserChats(user.id, async (updatedChats) => {
+      // Fetch user details for updated chats
       const chatsWithDetails = await Promise.all(
         updatedChats.map(async (chat) => {
           try {
@@ -141,6 +123,7 @@ export default function ChatPage() {
             
             const userData = await getUser(chat.otherUser);
             
+            // Skip if user doesn't exist or is invalid
             if (!userData || !userData.username) {
               return null;
             }
@@ -161,19 +144,12 @@ export default function ChatPage() {
         })
       );
       
+      // Filter out null values
       const validChats = chatsWithDetails.filter(chat => chat !== null && chat.otherUserDetails !== null);
       setChats(validChats);
     });
 
-    // Subscribe to real-time group updates
-    const unsubscribeGroups = subscribeToUserGroups(user.id, (updatedGroups) => {
-      setGroups(updatedGroups);
-    });
-
-    return () => {
-      unsubscribeChats();
-      unsubscribeGroups();
-    };
+    return () => unsubscribe();
   }, [user?.id]);
 
   // Search functionality
@@ -190,16 +166,12 @@ export default function ChatPage() {
           const results = await searchFriends(user.id, searchQuery);
           setSearchResults(results);
         } else {
-          // Search in both chats and groups
-          const chatResults = chats.filter(chat =>
+          // Search in chats
+          const filtered = chats.filter(chat =>
             chat.otherUserDetails?.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             chat.lastMessage?.toLowerCase().includes(searchQuery.toLowerCase())
           );
-          const groupResults = groups.filter(group =>
-            group.groupName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            group.lastMessage?.toLowerCase().includes(searchQuery.toLowerCase())
-          );
-          setSearchResults([...chatResults, ...groupResults]);
+          setSearchResults(filtered);
         }
       } catch (error) {
         console.error('Search error:', error);
@@ -209,28 +181,14 @@ export default function ChatPage() {
     }, 300);
 
     return () => clearTimeout(searchTimer);
-  }, [searchQuery, user?.id, activeTab, chats, groups]);
+  }, [searchQuery, user?.id, activeTab, chats]);
 
   const handleChatClick = (otherUserId) => {
     navigate(`/chat/${otherUserId}`);
   };
 
-  const handleGroupClick = (groupId) => {
-    navigate(`/group/${groupId}`);
-  };
-
   const handleStartNewChat = (friendId) => {
     navigate(`/chat/${friendId}`);
-  };
-
-  const handleGroupCreated = (group) => {
-    // Reload groups
-    getUserGroups(user.id).then(groupsData => {
-      setGroups(groupsData);
-      cacheGroups(user.id, groupsData);
-    });
-    // Navigate to the new group
-    navigate(`/group/${group.id}`);
   };
 
   const formatTime = (timestamp) => {
@@ -253,6 +211,7 @@ export default function ChatPage() {
   const renderChatItem = (chat) => {
     const otherUser = chat.otherUserDetails;
     
+    // Skip rendering if no valid user details
     if (!otherUser || !otherUser.username) {
       return null;
     }
@@ -274,6 +233,7 @@ export default function ChatPage() {
               : 'bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a] hover:shadow-card-hover dark:hover:shadow-none'
         } border border-neutral-200 dark:border-neutral-700 discuss:border-[#333333] ${hasUnread ? 'ring-1 ring-[#2563EB]/20 discuss:ring-[#EF4444]/20' : ''} shadow-card`}
       >
+        {/* Avatar with unread indicator */}
         <div className="relative shrink-0">
           {otherUser.photo_url ? (
             <img
@@ -321,58 +281,6 @@ export default function ChatPage() {
     );
   };
 
-  const renderGroupItem = (group) => {
-    const isDeleted = group.status === GROUP_STATUS.DELETED;
-    const hasUnread = group.unreadCount > 0 && !isDeleted;
-    const initials = group.groupName?.slice(0, 2).toUpperCase() || 'GR';
-
-    return (
-      <button
-        key={group.groupId}
-        onClick={() => handleGroupClick(group.groupId)}
-        className={`w-full flex items-center gap-3 p-3 rounded-[12px] transition-all ${
-          isDeleted 
-            ? 'bg-neutral-50/50 dark:bg-neutral-800/50 discuss:bg-[#1a1a1a]/50 opacity-60'
-            : hasUnread
-              ? 'bg-[#2563EB]/5 dark:bg-[#2563EB]/10 discuss:bg-[#EF4444]/10 border-[#2563EB]/30 dark:border-[#2563EB]/30 discuss:border-[#EF4444]/30'
-              : 'bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a] hover:shadow-card-hover dark:hover:shadow-none'
-        } border border-neutral-200 dark:border-neutral-700 discuss:border-[#333333] ${hasUnread ? 'ring-1 ring-[#2563EB]/20 discuss:ring-[#EF4444]/20' : ''} shadow-card`}
-      >
-        <div className="relative shrink-0">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-            <span className="text-white font-bold text-sm">{initials}</span>
-          </div>
-          {hasUnread && (
-            <span className="absolute -top-1 -right-1 bg-[#EF4444] text-white text-[10px] font-bold min-w-[18px] h-[18px] flex items-center justify-center rounded-full px-1 shadow-sm">
-              {group.unreadCount > 99 ? '99+' : group.unreadCount}
-            </span>
-          )}
-        </div>
-        
-        <div className="flex-1 min-w-0 text-left">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className={`font-semibold text-sm truncate ${hasUnread ? 'text-neutral-900 dark:text-white discuss:text-white' : 'text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]'}`}>
-                {group.groupName}
-              </span>
-              <span className="bg-purple-100 dark:bg-purple-900/30 discuss:bg-purple-900/30 text-purple-700 dark:text-purple-300 discuss:text-purple-300 text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0">
-                Group Chat
-              </span>
-            </div>
-            <span className="text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF] text-xs shrink-0">
-              {formatTime(group.lastMessageTime || group.joinedAt)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-2 mt-0.5">
-            <p className={`text-xs truncate ${hasUnread ? 'text-neutral-900 dark:text-neutral-200 discuss:text-[#E5E7EB] font-medium' : 'text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]'}`}>
-              {isDeleted ? 'Group was deleted' : (group.lastMessage || 'No messages yet')}
-            </p>
-          </div>
-        </div>
-      </button>
-    );
-  };
-
   const renderFriendItem = (friend) => {
     const initials = (friend.username || 'U').slice(0, 2).toUpperCase();
 
@@ -411,29 +319,14 @@ export default function ChatPage() {
     );
   };
 
-  // Combine and sort chats and groups by last message time
-  const combinedChatsAndGroups = [
-    ...chats.map(c => ({ ...c, type: 'chat' })),
-    ...groups.map(g => ({ ...g, type: 'group' }))
-  ].sort((a, b) => {
-    const timeA = new Date(a.lastMessageTime || a.joinedAt || 0);
-    const timeB = new Date(b.lastMessageTime || b.joinedAt || 0);
-    return timeB - timeA;
-  });
-
-  const displayData = searchQuery.trim() 
-    ? searchResults 
-    : (activeTab === 'chats' ? combinedChatsAndGroups : friends);
-
-  const totalUnread = chats.reduce((sum, c) => sum + (c.unreadCount || 0), 0) + 
-                      groups.reduce((sum, g) => sum + (g.unreadCount || 0), 0);
+  const displayData = searchQuery.trim() ? searchResults : (activeTab === 'chats' ? chats : friends);
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 discuss:bg-[#121212]">
       <Header />
       
       <div className="max-w-2xl mx-auto px-4 md:px-8 py-6">
-        {/* Header with three-dot menu */}
+        {/* Back button and title */}
         <div className="flex items-center gap-3 mb-4">
           <button
             onClick={() => navigate('/feed')}
@@ -441,28 +334,9 @@ export default function ChatPage() {
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="font-heading text-xl font-bold text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5] flex-1">
+          <h1 className="font-heading text-xl font-bold text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]">
             Messages
           </h1>
-          
-          {/* Three-dot menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="p-2 rounded-[6px] hover:bg-white dark:hover:bg-neutral-800 discuss:hover:bg-[#1a1a1a] text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF] transition-colors border border-neutral-200 dark:border-neutral-700 discuss:border-[#333333]">
-                <MoreVertical className="w-5 h-5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onClick={() => setCreateGroupOpen(true)}>
-                <UserPlus className="w-4 h-4 mr-2" />
-                Create Group
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate('/join-requests')}>
-                <Inbox className="w-4 h-4 mr-2" />
-                View / Manage Requests
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
 
         {/* Tabs */}
@@ -477,9 +351,9 @@ export default function ChatPage() {
           >
             <MessageCircle className="w-4 h-4" />
             Chats
-            {totalUnread > 0 && (
+            {chats.filter(c => c.unreadCount > 0).length > 0 && (
               <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                {totalUnread > 99 ? '99+' : totalUnread}
+                {chats.filter(c => c.unreadCount > 0).length}
               </span>
             )}
           </button>
@@ -506,7 +380,7 @@ export default function ChatPage() {
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={activeTab === 'chats' ? 'Search chats and groups...' : 'Search friends...'}
+              placeholder={activeTab === 'chats' ? 'Search chats...' : 'Search friends...'}
               className="pl-10 pr-10 bg-white dark:bg-neutral-800 discuss:bg-[#1a1a1a] border-neutral-200 dark:border-neutral-700 discuss:border-[#333333] text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5] placeholder:text-neutral-400 dark:placeholder:text-neutral-500 discuss:placeholder:text-[#9CA3AF] rounded-[6px] text-sm h-10"
             />
             {searchQuery && (
@@ -547,27 +421,17 @@ export default function ChatPage() {
                   No chats yet
                 </h3>
                 <p className="text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF] text-sm mb-4">
-                  Start a conversation with friends or create a group
+                  Start a conversation with your friends
                 </p>
-                <div className="flex gap-2 justify-center">
-                  {friends.length > 0 && (
-                    <Button
-                      onClick={() => setActiveTab('friends')}
-                      className="bg-[#2563EB] discuss:bg-[#EF4444] hover:bg-[#1D4ED8] discuss:hover:bg-[#DC2626] text-white rounded-[6px] shadow-button"
-                    >
-                      <Users className="w-4 h-4 mr-2" />
-                      View Friends
-                    </Button>
-                  )}
+                {friends.length > 0 && (
                   <Button
-                    onClick={() => setCreateGroupOpen(true)}
-                    variant="outline"
-                    className="border-neutral-200 dark:border-neutral-700 discuss:border-[#333333] rounded-[6px]"
+                    onClick={() => setActiveTab('friends')}
+                    className="bg-[#2563EB] discuss:bg-[#EF4444] hover:bg-[#1D4ED8] discuss:hover:bg-[#DC2626] text-white rounded-[6px] shadow-button"
                   >
-                    <UserPlus className="w-4 h-4 mr-2" />
-                    Create Group
+                    <Users className="w-4 h-4 mr-2" />
+                    View Friends
                   </Button>
-                </div>
+                )}
               </>
             ) : (
               <>
@@ -590,24 +454,12 @@ export default function ChatPage() {
         ) : (
           <div className="space-y-2 scrollbar-hide" style={{ maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' }}>
             {activeTab === 'chats'
-              ? displayData.map(item => 
-                  item.type === 'group' 
-                    ? renderGroupItem(item) 
-                    : renderChatItem(item)
-                ).filter(Boolean)
+              ? displayData.map(renderChatItem).filter(Boolean)
               : displayData.map(renderFriendItem).filter(Boolean)
             }
           </div>
         )}
       </div>
-
-      {/* Create Group Modal */}
-      <CreateGroupModal
-        open={createGroupOpen}
-        onOpenChange={setCreateGroupOpen}
-        userId={user?.id}
-        onGroupCreated={handleGroupCreated}
-      />
 
       <style jsx global>{`
         .scrollbar-hide::-webkit-scrollbar {

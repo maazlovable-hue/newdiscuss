@@ -1,10 +1,10 @@
 // Cache Manager - IndexedDB for Performance Optimization
-// Caches: Posts, Users, Friends, Chats for faster loading
+// Caches: Posts, Users, Friends, Chats, Groups for faster loading
 
 import { openDB } from 'idb';
 
 const DB_NAME = 'discuss_cache';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // Cache duration constants (in milliseconds)
 export const CACHE_DURATION = {
@@ -13,7 +13,9 @@ export const CACHE_DURATION = {
   FRIENDS: 2 * 60 * 1000,     // 2 minutes
   CHATS: 1 * 60 * 1000,       // 1 minute
   PROFILE: 15 * 60 * 1000,    // 15 minutes
-  COMMENTS: 3 * 60 * 1000     // 3 minutes
+  COMMENTS: 3 * 60 * 1000,    // 3 minutes
+  GROUPS: 1 * 60 * 1000,      // 1 minute
+  GROUP_MESSAGES: 1 * 60 * 1000  // 1 minute
 };
 
 /**
@@ -63,6 +65,19 @@ const getDB = async () => {
         const commentsStore = db.createObjectStore('comments', { keyPath: 'cacheKey' });
         commentsStore.createIndex('postId', 'postId');
         commentsStore.createIndex('timestamp', 'timestamp');
+      }
+      
+      // Groups store - added in version 4
+      if (!db.objectStoreNames.contains('groups')) {
+        const groupsStore = db.createObjectStore('groups', { keyPath: 'groupId' });
+        groupsStore.createIndex('lastMessageTime', 'lastMessageTime');
+      }
+      
+      // Group messages store - added in version 4
+      if (!db.objectStoreNames.contains('group_messages')) {
+        const groupMessagesStore = db.createObjectStore('group_messages', { keyPath: 'id' });
+        groupMessagesStore.createIndex('groupId', 'groupId');
+        groupMessagesStore.createIndex('timestamp', 'timestamp');
       }
     },
   });
@@ -518,5 +533,129 @@ export const smartFetch = async (cacheKey, getCached, fetchFresh, cacheData, max
         throw error;
       }
     }
+  }
+};
+
+
+// ==================== GROUPS CACHE ====================
+
+/**
+ * Cache groups for a user
+ * @param {string} userId - User ID
+ * @param {Array} groups - Groups array
+ */
+export const cacheGroups = async (userId, groups) => {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('groups', 'readwrite');
+    
+    // Clear old groups for this user
+    const store = tx.objectStore('groups');
+    const allGroups = await store.getAll();
+    for (const group of allGroups) {
+      if (group.userId === userId) {
+        await store.delete(group.groupId);
+      }
+    }
+    
+    // Add new groups
+    for (const group of groups) {
+      await store.put({ ...group, userId, cachedAt: Date.now() });
+    }
+    
+    await tx.done;
+    await setCacheTimestamp(`groups_${userId}`);
+  } catch (e) {
+    console.warn('Groups cache write failed:', e);
+  }
+};
+
+/**
+ * Get cached groups for a user
+ * @param {string} userId - User ID
+ */
+export const getCachedGroups = async (userId) => {
+  try {
+    const isValid = await isCacheValid(`groups_${userId}`, CACHE_DURATION.GROUPS);
+    if (!isValid) return null;
+    
+    const db = await getDB();
+    const allGroups = await db.getAll('groups');
+    const userGroups = allGroups.filter(g => g.userId === userId);
+    
+    return userGroups.length > 0 ? userGroups : null;
+  } catch (e) {
+    console.warn('Groups cache read failed:', e);
+    return null;
+  }
+};
+
+/**
+ * Cache group messages
+ * @param {string} groupId - Group ID
+ * @param {Array} messages - Messages array
+ */
+export const cacheGroupMessages = async (groupId, messages) => {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('group_messages', 'readwrite');
+    const store = tx.objectStore('group_messages');
+    
+    // Clear old messages for this group
+    const index = store.index('groupId');
+    const oldMessages = await index.getAll(groupId);
+    for (const msg of oldMessages) {
+      await store.delete(msg.id);
+    }
+    
+    // Add new messages
+    for (const message of messages) {
+      await store.put({ ...message, groupId, cachedAt: Date.now() });
+    }
+    
+    await tx.done;
+    await setCacheTimestamp(`group_messages_${groupId}`);
+  } catch (e) {
+    console.warn('Group messages cache write failed:', e);
+  }
+};
+
+/**
+ * Get cached group messages
+ * @param {string} groupId - Group ID
+ */
+export const getCachedGroupMessages = async (groupId) => {
+  try {
+    const isValid = await isCacheValid(`group_messages_${groupId}`, CACHE_DURATION.GROUP_MESSAGES);
+    if (!isValid) return null;
+    
+    const db = await getDB();
+    const index = db.transaction('group_messages').store.index('groupId');
+    const messages = await index.getAll(groupId);
+    
+    return messages.length > 0 ? messages : null;
+  } catch (e) {
+    console.warn('Group messages cache read failed:', e);
+    return null;
+  }
+};
+
+/**
+ * Clear groups cache for a user
+ * @param {string} userId - User ID
+ */
+export const clearGroupsCache = async (userId) => {
+  try {
+    const db = await getDB();
+    const store = db.transaction('groups', 'readwrite').store;
+    const allGroups = await store.getAll();
+    
+    for (const group of allGroups) {
+      if (group.userId === userId) {
+        await store.delete(group.groupId);
+      }
+    }
+  } catch (e) {
+    console.warn('Clear groups cache failed:', e);
   }
 };
