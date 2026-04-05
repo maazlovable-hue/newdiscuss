@@ -128,6 +128,29 @@ export const getUser = async (userId) => {
   return null;
 };
 
+
+/**
+ * Get all users (for search/add members)
+ */
+export const getAllUsers = async () => {
+  try {
+    const usersRef = ref(database, 'users');
+    const snapshot = await get(usersRef);
+    
+    if (!snapshot.exists()) return [];
+    
+    const users = snapshot.val();
+    return Object.entries(users).map(([id, data]) => ({
+      id,
+      ...data
+    }));
+  } catch (error) {
+    console.error('Error getting all users:', error);
+    return [];
+  }
+};
+
+
 export const getUserByEmail = async (email) => {
   const usersRef = ref(database, 'users');
   const snapshot = await get(usersRef);

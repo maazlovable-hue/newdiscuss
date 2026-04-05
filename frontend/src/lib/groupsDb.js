@@ -117,7 +117,13 @@ export const createGroup = async (creatorId, groupName, type = GROUP_TYPE.PUBLIC
     await set(ref(fourthDatabase, `groupNames/${normalized}`), groupId);
     
     // Add creator as admin member
-    await addMemberToGroup(groupId, creatorId, MEMBER_ROLE.ADMIN, creatorId);
+    const memberRef = ref(fourthDatabase, `groups/${groupId}/members/${creatorId}`);
+    await set(memberRef, {
+      userId: creatorId,
+      role: MEMBER_ROLE.ADMIN,
+      joinedAt: timestamp,
+      addedBy: creatorId
+    });
     
     // Add to creator's group list
     await addGroupToUserList(creatorId, groupId, trimmedName, type);
