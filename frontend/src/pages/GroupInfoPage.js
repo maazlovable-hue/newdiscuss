@@ -135,6 +135,14 @@ export default function GroupInfoPage() {
 
   const handleLeaveGroup = async () => {
     try {
+      // Check if user is the only admin
+      const admins = members.filter(m => m.role === MEMBER_ROLE.ADMIN);
+      if (admins.length === 1 && admins[0].userId === user.id && members.length > 1) {
+        toast.error('Assign at least one admin or delete the group before leaving');
+        setConfirmDialog({ open: false, action: null, data: null });
+        return;
+      }
+      
       await leaveGroup(groupId, user.id);
       toast.success('Left group');
       navigate('/chat');
@@ -264,23 +272,23 @@ export default function GroupInfoPage() {
                 {adminMembers.map(member => {
                   const details = userDetails[member.userId];
                   return (
-                    <div key={member.userId} className="flex items-center justify-between p-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 discuss:hover:bg-[#262626]">
-                      <button onClick={() => handleUserClick(member.userId)} className="flex items-center gap-3 flex-1 text-left">
-                        {details?.photo_url ? <img src={details.photo_url} alt="" className="w-10 h-10 rounded-full" /> : (
-                          <div className="w-10 h-10 rounded-full bg-[#2563EB] discuss:bg-[#EF4444] flex items-center justify-center">
+                    <div key={member.userId} className="flex items-center justify-between gap-3 p-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 discuss:hover:bg-[#262626]">
+                      <button onClick={() => handleUserClick(member.userId)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                        {details?.photo_url ? <img src={details.photo_url} alt="" className="w-10 h-10 rounded-full shrink-0" /> : (
+                          <div className="w-10 h-10 rounded-full bg-[#2563EB] discuss:bg-[#EF4444] flex items-center justify-center shrink-0">
                             <span className="text-white font-bold text-sm">{details?.username?.slice(0, 2).toUpperCase()}</span>
                           </div>
                         )}
-                        <div>
+                        <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1">
-                            <span className="font-semibold text-sm text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]">@{details?.username || 'User'}</span>
+                            <span className="font-semibold text-sm text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5] truncate">@{details?.username || 'User'}</span>
                             {details?.verified && <VerifiedBadge size="sm" />}
                           </div>
                           <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1"><Crown className="w-3 h-3" />Admin</span>
                         </div>
                       </button>
                       {isAdmin && member.userId !== user.id && !isDeleted && (
-                        <Button size="sm" variant="outline" onClick={() => setConfirmDialog({ open: true, action: 'demote', data: member.userId })} className="text-xs">Demote</Button>
+                        <Button size="sm" variant="outline" onClick={() => setConfirmDialog({ open: true, action: 'demote', data: member.userId })} className="text-xs shrink-0">Demote</Button>
                       )}
                     </div>
                   );
@@ -296,26 +304,26 @@ export default function GroupInfoPage() {
                 {regularMembers.map(member => {
                   const details = userDetails[member.userId];
                   return (
-                    <div key={member.userId} className="flex items-center justify-between p-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 discuss:hover:bg-[#262626]">
-                      <button onClick={() => handleUserClick(member.userId)} className="flex items-center gap-3 flex-1 text-left">
-                        {details?.photo_url ? <img src={details.photo_url} alt="" className="w-10 h-10 rounded-full" /> : (
-                          <div className="w-10 h-10 rounded-full bg-[#2563EB] discuss:bg-[#EF4444] flex items-center justify-center">
+                    <div key={member.userId} className="flex items-center justify-between gap-2 p-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 discuss:hover:bg-[#262626]">
+                      <button onClick={() => handleUserClick(member.userId)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                        {details?.photo_url ? <img src={details.photo_url} alt="" className="w-10 h-10 rounded-full shrink-0" /> : (
+                          <div className="w-10 h-10 rounded-full bg-[#2563EB] discuss:bg-[#EF4444] flex items-center justify-center shrink-0">
                             <span className="text-white font-bold text-sm">{details?.username?.slice(0, 2).toUpperCase()}</span>
                           </div>
                         )}
-                        <div>
+                        <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1">
-                            <span className="font-semibold text-sm text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5]">@{details?.username || 'User'}</span>
+                            <span className="font-semibold text-sm text-neutral-900 dark:text-neutral-50 discuss:text-[#F5F5F5] truncate">@{details?.username || 'User'}</span>
                             {details?.verified && <VerifiedBadge size="sm" />}
                           </div>
                         </div>
                       </button>
                       {isAdmin && !isDeleted && (
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => setConfirmDialog({ open: true, action: 'promote', data: member.userId })} className="text-xs">
+                        <div className="flex gap-1 shrink-0">
+                          <Button size="sm" variant="outline" onClick={() => setConfirmDialog({ open: true, action: 'promote', data: member.userId })} className="text-xs px-2">
                             <Shield className="w-3 h-3 mr-1" />Promote
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => setConfirmDialog({ open: true, action: 'remove', data: member.userId })} className="text-xs text-red-600">
+                          <Button size="sm" variant="outline" onClick={() => setConfirmDialog({ open: true, action: 'remove', data: member.userId })} className="text-xs text-red-600 px-2">
                             <UserMinus className="w-3 h-3" />
                           </Button>
                         </div>
