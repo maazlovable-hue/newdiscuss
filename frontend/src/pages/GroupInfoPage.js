@@ -359,16 +359,28 @@ export default function GroupInfoPage() {
           )}
         </div>
 
-        {isMember && !isDeleted && (
-          <div className="space-y-2">
-            <Button onClick={() => setConfirmDialog({ open: true, action: 'deletechat' })} variant="outline" className="w-full border-red-200 text-red-600 hover:bg-red-50">
-              <Trash2 className="w-4 h-4 mr-2" />Delete Chat {isAdmin && '(For Everyone)'}
-            </Button>
+        <div className="space-y-2">
+          {isMember && (
             <Button onClick={() => setConfirmDialog({ open: true, action: 'leave' })} variant="outline" className="w-full border-red-200 text-red-600 hover:bg-red-50">
               <LogOut className="w-4 h-4 mr-2" />Leave Group
             </Button>
-          </div>
-        )}
+          )}
+          
+          {isAdmin && isMember && (
+            <>
+              <Button onClick={() => setConfirmDialog({ open: true, action: 'deletemessages' })} variant="outline" className="w-full border-red-200 text-red-600 hover:bg-red-50">
+                <Trash2 className="w-4 h-4 mr-2" />Delete All Messages (For Everyone)
+              </Button>
+              <Button onClick={() => setConfirmDialog({ open: true, action: 'deletegroup' })} variant="outline" className="w-full border-red-200 text-red-600 hover:bg-red-50">
+                <Trash2 className="w-4 h-4 mr-2" />Delete Group (Permanent)
+              </Button>
+            </>
+          )}
+          
+          <Button onClick={() => setConfirmDialog({ open: true, action: 'deletechat' })} variant="outline" className="w-full border-neutral-200 text-neutral-600 hover:bg-neutral-50">
+            <Trash2 className="w-4 h-4 mr-2" />Delete Chat From List
+          </Button>
+        </div>
       </div>
 
       <Dialog open={addMembersOpen} onOpenChange={setAddMembersOpen}>
