@@ -475,9 +475,29 @@ export const getUserGroups = async (userId) => {
     if (!snapshot.exists()) return [];
     
     const groups = snapshot.val();
-    return Object.entries(groups)
-      .map(([groupId, group]) => ({ groupId, ...group }))
-      .sort((a, b) => new Date(b.lastMessageTime || b.joinedAt) - new Date(a.lastMessageTime || a.joinedAt));
+    const validGroups = [];
+    
+    for (const [groupId, group] of Object.entries(groups)) {
+      // Check if group still exists
+      const groupRef = ref(fourthDatabase, `groups/${groupId}`);
+      const groupSnap = await get(groupRef);
+      
+      if (groupSnap.exists()) {
+        const groupData = groupSnap.val();
+        
+        // Auto-delete old messages if enabled
+        if (groupData.settings?.autoDelete24h) {
+          await autoDeleteOldGroupMessages(groupId);
+        }
+        
+        validGroups.push({ groupId, ...group });
+      } else {
+        // Group was deleted, remove from user's list
+        await remove(userGroupsRef.child(groupId));
+      }
+    }
+    
+    return validGroups.sort((a, b) => new Date(b.lastMessageTime || b.joinedAt) - new Date(a.lastMessageTime || a.joinedAt));
   } catch (error) {
     console.error('Error getting user groups:', error);
     return [];
@@ -486,14 +506,41 @@ export const getUserGroups = async (userId) => {
 
 export const subscribeToUserGroups = (userId, callback) => {
   const userGroupsRef = ref(fourthDatabase, `userGroups/${userId}`);
-  const handleGroups = (snapshot) => {
-    if (!snapshot.exists()) { callback([]); return; }
+  
+  const handleGroups = async (snapshot) => {
+    if (!snapshot.exists()) { 
+      callback([]); 
+      return; 
+    }
+    
     const groups = snapshot.val();
-    const groupsList = Object.entries(groups)
-      .map(([groupId, group]) => ({ groupId, ...group }))
-      .sort((a, b) => new Date(b.lastMessageTime || b.joinedAt) - new Date(a.lastMessageTime || a.joinedAt));
-    callback(groupsList);
+    const validGroups = [];
+    
+    for (const [groupId, group] of Object.entries(groups)) {
+      // Check if group still exists
+      const groupRef = ref(fourthDatabase, `groups/${groupId}`);
+      const groupSnap = await get(groupRef);
+      
+      if (groupSnap.exists()) {
+        const groupData = groupSnap.val();
+        
+        // Auto-delete old messages if enabled (background)
+        if (groupData.settings?.autoDelete24h) {
+          autoDeleteOldGroupMessages(groupId).catch(err => console.error('Auto-delete error:', err));
+        }
+        
+        validGroups.push({ groupId, ...group });
+      } else {
+        // Group was deleted, remove from user's list
+        const userGroupRef = ref(fourthDatabase, `userGroups/${userId}/${groupId}`);
+        await remove(userGroupRef);
+      }
+    }
+    
+    const sorted = validGroups.sort((a, b) => new Date(b.lastMessageTime || b.joinedAt) - new Date(a.lastMessageTime || a.joinedAt));
+    callback(sorted);
   };
+  
   onValue(userGroupsRef, handleGroups);
   return () => off(userGroupsRef);
 };
@@ -676,6 +723,7 @@ export const isGroupAdmin = async (groupId, userId) => {
 export const autoDeleteOldGroupMessages = async (groupId) => {
   try {
     if (!fourthDatabase) return { deleted: 0 };
+    
     const groupRef = ref(fourthDatabase, `groups/${groupId}`);
     const groupSnap = await get(groupRef);
     if (!groupSnap.exists()) return { deleted: 0 };
@@ -700,6 +748,24 @@ export const autoDeleteOldGroupMessages = async (groupId) => {
       });
     
     await Promise.all(deletePromises);
+    
+    // Update last message if messages were deleted
+    if (deletedCount > 0) {
+      const remainingMsgs = await get(messagesRef);
+      if (!remainingMsgs.exists() || Object.keys(remainingMsgs.val()).length === 0) {
+        // All messages deleted, update all members
+        const membersRef = ref(fourthDatabase, `groups/${groupId}/members`);
+        const membersSnap = await get(membersRef);
+        if (membersSnap.exists()) {
+          const membersList = membersSnap.val();
+          for (const userId of Object.keys(membersList)) {
+            const userGroupRef = ref(fourthDatabase, `userGroups/${userId}/${groupId}`);
+            await update(userGroupRef, { lastMessage: '', unreadCount: 0 });
+          }
+        }
+      }
+    }
+    
     return { deleted: deletedCount };
   } catch (error) {
     console.error('Error auto-deleting messages:', error);

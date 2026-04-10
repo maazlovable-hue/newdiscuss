@@ -6,7 +6,7 @@ import { getFriendsWithDetails, getRelationshipStatus, sendFriendRequest } from 
 import {
   getGroupInfo, getGroupMembers, subscribeToGroupMembers, isGroupAdmin, isGroupMember,
   removeMemberFromGroup, promoteMemberToAdmin, demoteAdminToMember, leaveGroup, deleteGroup,
-  updateGroupSettings, addMemberToGroup, deleteChatLocally, deleteAllGroupMessages,
+  updateGroupSettings, addMemberToGroup, deleteChatLocally,
   GROUP_STATUS, GROUP_TYPE, MEMBER_ROLE
 } from '@/lib/groupsDb';
 import Header from '@/components/Header';
@@ -441,6 +441,22 @@ export default function GroupInfoPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              if (confirmDialog.action === 'remove') handleRemoveMember(confirmDialog.data);
+              else if (confirmDialog.action === 'promote') handlePromote(confirmDialog.data);
+              else if (confirmDialog.action === 'demote') handleDemote(confirmDialog.data);
+              else if (confirmDialog.action === 'leave') handleLeaveGroup();
+              else if (confirmDialog.action === 'deletechat') handleDeleteChat();
+            }} className="bg-red-600 hover:bg-red-700">
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+Cancel>
             <AlertDialogAction onClick={() => {
               if (confirmDialog.action === 'remove') handleRemoveMember(confirmDialog.data);
               else if (confirmDialog.action === 'promote') handlePromote(confirmDialog.data);
