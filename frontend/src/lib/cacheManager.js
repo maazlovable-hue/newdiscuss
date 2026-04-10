@@ -1,7 +1,49 @@
-// Cache Manager - IndexedDB for Performance Optimization
+// Cache Manager - IndexedDB + localStorage for Performance Optimization
 // Caches: Posts, Users, Friends, Chats, Groups for faster loading
+// Uses localStorage for instant rendering, IndexedDB for persistence
 
 import { openDB } from 'idb';
+
+// ==================== FAST LOCAL STORAGE CACHE ====================
+// For instant UI rendering before IndexedDB loads
+
+const LS_PREFIX = 'discuss_fast_';
+
+/**
+ * Quick save to localStorage (synchronous, instant)
+ */
+export const fastCacheSave = (key, data) => {
+  try {
+    const cacheItem = { data, timestamp: Date.now() };
+    localStorage.setItem(`${LS_PREFIX}${key}`, JSON.stringify(cacheItem));
+  } catch (e) {
+    // localStorage might be full, silently fail
+  }
+};
+
+/**
+ * Quick load from localStorage (synchronous, instant)
+ */
+export const fastCacheLoad = (key, maxAgeMs = 5 * 60 * 1000) => {
+  try {
+    const raw = localStorage.getItem(`${LS_PREFIX}${key}`);
+    if (!raw) return null;
+    const { data, timestamp } = JSON.parse(raw);
+    // Return data even if stale, let caller decide
+    return { data, isStale: Date.now() - timestamp > maxAgeMs, timestamp };
+  } catch (e) {
+    return null;
+  }
+};
+
+/**
+ * Clear fast cache for a key
+ */
+export const fastCacheClear = (key) => {
+  try {
+    localStorage.removeItem(`${LS_PREFIX}${key}`);
+  } catch (e) {}
+};
 
 const DB_NAME = 'discuss_cache';
 const DB_VERSION = 4;
@@ -288,6 +330,9 @@ export const getCachedFriends = async (userId) => {
  */
 export const cacheChats = async (userId, chats) => {
   try {
+    // Save to fast localStorage cache immediately
+    fastCacheSave(`chats_${userId}`, chats);
+    
     const db = await getDB();
     const tx = db.transaction('chats', 'readwrite');
     
@@ -312,18 +357,31 @@ export const cacheChats = async (userId, chats) => {
 };
 
 /**
- * Get cached chats
+ * Get cached chats - with instant localStorage fallback
  */
 export const getCachedChats = async (userId) => {
   try {
+    // First try fast localStorage cache for instant render
+    const fastCache = fastCacheLoad(`chats_${userId}`, CACHE_DURATION.CHATS);
+    if (fastCache?.data) {
+      return fastCache.data;
+    }
+    
     const isValid = await isCacheValid(`chats_${userId}`, CACHE_DURATION.CHATS);
     if (!isValid) return null;
     
     const db = await getDB();
     const allChats = await db.getAll('chats');
-    return allChats
+    const chats = allChats
       .filter(chat => chat.userId === userId)
       .sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+    
+    // Save to fast cache for next time
+    if (chats.length > 0) {
+      fastCacheSave(`chats_${userId}`, chats);
+    }
+    
+    return chats;
   } catch (e) {
     console.warn('Chats cache read failed:', e);
     return null;
@@ -546,6 +604,9 @@ export const smartFetch = async (cacheKey, getCached, fetchFresh, cacheData, max
  */
 export const cacheGroups = async (userId, groups) => {
   try {
+    // Save to fast localStorage cache immediately
+    fastCacheSave(`groups_${userId}`, groups);
+    
     const db = await getDB();
     const tx = db.transaction('groups', 'readwrite');
     
@@ -571,17 +632,28 @@ export const cacheGroups = async (userId, groups) => {
 };
 
 /**
- * Get cached groups for a user
+ * Get cached groups for a user - with instant localStorage fallback
  * @param {string} userId - User ID
  */
 export const getCachedGroups = async (userId) => {
   try {
+    // First try fast localStorage cache for instant render
+    const fastCache = fastCacheLoad(`groups_${userId}`, CACHE_DURATION.GROUPS);
+    if (fastCache?.data) {
+      return fastCache.data;
+    }
+    
     const isValid = await isCacheValid(`groups_${userId}`, CACHE_DURATION.GROUPS);
     if (!isValid) return null;
     
     const db = await getDB();
     const allGroups = await db.getAll('groups');
     const userGroups = allGroups.filter(g => g.userId === userId);
+    
+    // Save to fast cache for next time
+    if (userGroups.length > 0) {
+      fastCacheSave(`groups_${userId}`, userGroups);
+    }
     
     return userGroups.length > 0 ? userGroups : null;
   } catch (e) {

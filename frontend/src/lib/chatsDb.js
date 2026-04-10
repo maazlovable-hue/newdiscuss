@@ -703,12 +703,33 @@ export const deleteMessageForEveryone = async (chatId, messageId, userId) => {
     const message = snapshot.val();
     if (message.sender !== userId) throw new Error('Only sender can delete for everyone');
     
+    const deletedText = 'This message was deleted';
+    
     // Update message to show as deleted
     await update(messageRef, {
       deleted: true,
       deletedAt: new Date().toISOString(),
-      text: 'This message was deleted'
+      text: deletedText
     });
+    
+    // Update chat's lastMessage if this was the last message
+    const chatRef = ref(thirdDatabase, `chats/${chatId}`);
+    const chatSnap = await get(chatRef);
+    if (chatSnap.exists()) {
+      const chat = chatSnap.val();
+      // Check if deleted message was the last message
+      if (chat.lastMessage?.text === message.text && chat.lastMessage?.timestamp === message.timestamp) {
+        await update(chatRef, {
+          lastMessage: { text: deletedText, sender: message.sender, timestamp: message.timestamp }
+        });
+        
+        // Update both users' chat lists
+        for (const participantId of chat.participants) {
+          const userChatRef = ref(thirdDatabase, `userChats/${participantId}/${chatId}`);
+          await update(userChatRef, { lastMessage: deletedText });
+        }
+      }
+    }
     
     return { success: true };
   } catch (error) {

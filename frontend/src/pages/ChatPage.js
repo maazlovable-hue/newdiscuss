@@ -326,7 +326,13 @@ export default function ChatPage() {
     const initials = otherUser.username.slice(0, 2).toUpperCase();
     const isBlocked = chat.status === 'blocked';
     const hasAutoDelete = chatSettings[chat.chatId]?.autoDelete;
-    const hasUnread = chat.unreadCount > 0 && !isBlocked;
+    // Don't show unread for deleted messages
+    const isDeletedMessage = chat.lastMessage === 'This message was deleted';
+    const hasUnread = chat.unreadCount > 0 && !isBlocked && !isDeletedMessage;
+    // Display deleted message in italics
+    const displayMessage = isBlocked 
+      ? 'Chat unavailable' 
+      : (chat.lastMessage || 'No messages yet');
 
     return (
       <button
@@ -378,8 +384,8 @@ export default function ChatPage() {
             </span>
           </div>
           <div className="flex items-center justify-between gap-2 mt-0.5">
-            <p className={`text-xs truncate ${hasUnread ? 'text-neutral-900 dark:text-neutral-200 discuss:text-[#E5E7EB] font-medium' : 'text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]'}`}>
-              {isBlocked ? 'Chat unavailable' : (chat.lastMessage || 'No messages yet')}
+            <p className={`text-xs truncate ${isDeletedMessage ? 'italic' : ''} ${hasUnread ? 'text-neutral-900 dark:text-neutral-200 discuss:text-[#E5E7EB] font-medium' : 'text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]'}`}>
+              {displayMessage}
             </p>
           </div>
         </div>
@@ -389,8 +395,13 @@ export default function ChatPage() {
 
   const renderGroupItem = (group) => {
     const isDeleted = group.status === GROUP_STATUS.DELETED;
-    const hasUnread = group.unreadCount > 0 && !isDeleted;
+    // Don't show unread for deleted messages
+    const isDeletedMessage = group.lastMessage === 'This message was deleted';
+    const hasUnread = group.unreadCount > 0 && !isDeleted && !isDeletedMessage;
     const initials = group.groupName?.slice(0, 2).toUpperCase() || 'GR';
+    const displayMessage = isDeleted 
+      ? 'Group was deleted' 
+      : (group.lastMessage || 'No messages yet');
 
     return (
       <button
@@ -430,8 +441,8 @@ export default function ChatPage() {
             </span>
           </div>
           <div className="flex items-center justify-between gap-2 mt-0.5">
-            <p className={`text-xs truncate ${hasUnread ? 'text-neutral-900 dark:text-neutral-200 discuss:text-[#E5E7EB] font-medium' : 'text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]'}`}>
-              {isDeleted ? 'Group was deleted' : (group.lastMessage || 'No messages yet')}
+            <p className={`text-xs truncate ${isDeletedMessage ? 'italic' : ''} ${hasUnread ? 'text-neutral-900 dark:text-neutral-200 discuss:text-[#E5E7EB] font-medium' : 'text-neutral-500 dark:text-neutral-400 discuss:text-[#9CA3AF]'}`}>
+              {displayMessage}
             </p>
           </div>
         </div>
