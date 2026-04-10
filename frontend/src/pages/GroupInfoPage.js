@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUser, getAllUsers } from '@/lib/db';
-import { getFriendsWithDetails, getRelationshipStatus, sendFriendRequest } from '@/lib/relationshipsDb';
+import { getFriendsWithDetails } from '@/lib/relationshipsDb';
 import {
   getGroupInfo, getGroupMembers, subscribeToGroupMembers, isGroupAdmin, isGroupMember,
   removeMemberFromGroup, promoteMemberToAdmin, demoteAdminToMember, leaveGroup, deleteGroup,
@@ -19,6 +19,34 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ArrowLeft, Loader2, Users, Shield, UserMinus, Crown, LogOut, Trash2, Settings, Clock, UserPlus, Search } from 'lucide-react';
 import { toast } from 'sonner';
+
+// Function to delete all group messages (admin only)
+const deleteAllGroupMessages = async (groupId, userId) => {
+  try {
+    const { fourthDatabase, ref, get, remove, update } = await import('@/lib/firebaseFourth');
+    if (!fourthDatabase) throw new Error('Database not available');
+    
+    // Remove all messages
+    const messagesRef = ref(fourthDatabase, `groups/${groupId}/messages`);
+    await remove(messagesRef);
+    
+    // Update all members' last message
+    const membersRef = ref(fourthDatabase, `groups/${groupId}/members`);
+    const membersSnap = await get(membersRef);
+    if (membersSnap.exists()) {
+      const members = membersSnap.val();
+      for (const uid of Object.keys(members)) {
+        const userGroupRef = ref(fourthDatabase, `userGroups/${uid}/${groupId}`);
+        await update(userGroupRef, { lastMessage: '', unreadCount: 0 });
+      }
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting all messages:', error);
+    throw error;
+  }
+};
 
 export default function GroupInfoPage() {
   const { groupId } = useParams();
@@ -435,20 +463,13 @@ export default function GroupInfoPage() {
               {confirmDialog.action === 'deletechat' && 'Delete Chat From List?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmDialog.action === 'remove' && 'This member will be removed.'}
-              {confirmDialog.action === 'promote' && 'This member will be promoted to admin.'}
-              {confirmDialog.action === 'demote' && 'This admin will be demoted.'}
-              {confirmDialog.action === 'leave' && 'You will leave this group.'}
-              {confirmDialog.action === 'deletemessages' && 'This will DELETE ALL MESSAGES for ALL members. Group will remain but show \"No messages\". Cannot be undone!'}
-              {confirmDialog.action === 'deletegroup' && 'This will PERMANENTLY DELETE the group for ALL members. All messages and data will be lost. Cannot be undone!'}
+              {confirmDialog.action === 'remove' && 'This member will be removed from the group.'}
+              {confirmDialog.action === 'promote' && 'This member will be promoted to admin with full group management permissions.'}
+              {confirmDialog.action === 'demote' && 'This admin will be demoted to a regular member.'}
+              {confirmDialog.action === 'leave' && 'You will leave this group. You can rejoin if added back.'}
+              {confirmDialog.action === 'deletemessages' && 'This will DELETE ALL MESSAGES for ALL members. The group will remain but show "No messages". This cannot be undone!'}
+              {confirmDialog.action === 'deletegroup' && 'This will PERMANENTLY DELETE the group for ALL members. All messages and data will be lost. This cannot be undone!'}
               {confirmDialog.action === 'deletechat' && 'This will remove the chat from your list only. You can rejoin later if added back.'}
-            </AlertDialogDescription>
-            <AlertDialogDescription>
-              {confirmDialog.action === 'remove' && 'This member will be removed.'}
-              {confirmDialog.action === 'promote' && 'This member will be promoted to admin.'}
-              {confirmDialog.action === 'demote' && 'This admin will be demoted.'}
-              {confirmDialog.action === 'leave' && 'You will leave this group.'}
-              {confirmDialog.action === 'deletechat' && (isAdmin && isMember ? 'This will PERMANENTLY delete the group for ALL members. All messages will be lost. This cannot be undone!' : 'This will delete this chat from your list only. You can rejoin later if invited.')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -458,22 +479,8 @@ export default function GroupInfoPage() {
               else if (confirmDialog.action === 'promote') handlePromote(confirmDialog.data);
               else if (confirmDialog.action === 'demote') handleDemote(confirmDialog.data);
               else if (confirmDialog.action === 'leave') handleLeaveGroup();
-              else if (confirmDialog.action === 'deletechat') handleDeleteChat();
-            }} className="bg-red-600 hover:bg-red-700">
-              Confirm
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
-Cancel>
-            <AlertDialogAction onClick={() => {
-              if (confirmDialog.action === 'remove') handleRemoveMember(confirmDialog.data);
-              else if (confirmDialog.action === 'promote') handlePromote(confirmDialog.data);
-              else if (confirmDialog.action === 'demote') handleDemote(confirmDialog.data);
-              else if (confirmDialog.action === 'leave') handleLeaveGroup();
+              else if (confirmDialog.action === 'deletemessages') handleDeleteAllMessages();
+              else if (confirmDialog.action === 'deletegroup') handleDeleteGroup();
               else if (confirmDialog.action === 'deletechat') handleDeleteChat();
             }} className="bg-red-600 hover:bg-red-700">
               Confirm
